@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { RoundedBox, Text, ContactShadows } from '@react-three/drei';
+import { RoundedBox, Text, ContactShadows, Environment } from '@react-three/drei';
 import * as THREE from 'three';
 
-// --- 1. HOOK DA CÂMERA (O Motor do Reflexo) ---
+// --- 1. HOOK DA CÂMERA COM TRATAMENTO DE ERRO ---
 function useWebcamTexture() {
   const [texture, setTexture] = useState(null);
 
@@ -16,29 +16,28 @@ function useWebcamTexture() {
 
     async function start() {
       try {
+        // Tenta pegar a câmera
         const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: 'user', width: 1024, height: 1024 } 
+          video: { facingMode: 'user', width: 640, height: 640 } 
         });
+        
         video.srcObject = stream;
         await video.play();
 
         const tex = new THREE.VideoTexture(video);
-        tex.colorSpace = THREE.SRGBColorSpace; // Importante para cores corretas
+        tex.colorSpace = THREE.SRGBColorSpace;
         tex.minFilter = THREE.LinearFilter;
         tex.magFilter = THREE.LinearFilter;
-        tex.format = THREE.RGBAFormat;
+        tex.mapping = THREE.EquirectangularReflectionMapping; // O efeito de distorção
         
-        // O SEGREDO DO VISUAL:
-        // Isso força o video retangular a "abraçar" o botão, criando a distorção líquida
-        tex.mapping = THREE.EquirectangularReflectionMapping; 
-        
-        // Espelhar horizontalmente para agir como espelho real
+        // Espelhar
         tex.center.set(0.5, 0.5);
         tex.repeat.set(-1, 1);
 
         setTexture(tex);
       } catch (e) {
-        console.error("Sem câmera", e);
+        console.warn("Câmera não autorizada ou indisponível. Usando fallback.", e);
+        // Não faz nada, o componente vai usar o ambiente padrão
       }
     }
     start();
@@ -47,16 +46,15 @@ function useWebcamTexture() {
   return texture;
 }
 
-// --- 2. O BOTÃO CROMADO (O Visual) ---
+// --- 2. O BOTÃO ---
 function ChromePill({ envMap }) {
   const mesh = useRef();
   const [hovered, setHover] = useState(false);
 
-  // Micro-animação suave (flutuação imperceptível para dar vida)
   useFrame((state) => {
     const t = state.clock.getElapsedTime();
-    mesh.current.rotation.x = Math.sin(t * 0.5) * 0.05; // Leve inclinação
-    mesh.current.rotation.y = Math.sin(t * 0.3) * 0.05; // Leve rotação
+    mesh.current.rotation.x = Math.sin(t * 0.5) * 0.05;
+    mesh.current.rotation.y = Math.sin(t * 0.3) * 0.05;
   });
 
   return (
@@ -65,79 +63,65 @@ function ChromePill({ envMap }) {
         ref={mesh}
         onPointerOver={() => setHover(true)}
         onPointerOut={() => setHover(false)}
-        scale={hovered ? 1.02 : 1} // Zoom sutil no hover
+        scale={hovered ? 1.05 : 1}
       >
-        {/* Formato Pílula: args=[largura, altura, profundidade] */}
-        <RoundedBox args={[3.5, 1.2, 0.4]} radius={0.6} smoothness={10}>
+        {/* Raio ajustado para ficar redondinho nas pontas */}
+        <RoundedBox args={[3.5, 1.2, 0.4]} radius={0.6} smoothness={8}>
           <meshPhysicalMaterial
-            color="#ffffff"        // Base branca
-            roughness={0}          // Espelho perfeito
-            metalness={1}          // 100% Metal
-            envMap={envMap}        // A Câmera é o ambiente
-            envMapIntensity={1.3}  // Brilho do reflexo
-            clearcoat={1}          // Camada de verniz (efeito vidro)
+            color={envMap ? "#ffffff" : "#aaaaaa"} // Se não tiver câmera, usa cinza base
+            roughness={0.05}       // Pouca rugosidade para brilhar
+            metalness={1}          // Metal total
+            envMap={envMap}        // Usa a câmera se existir
+            envMapIntensity={1.5}
+            clearcoat={1}
             clearcoatRoughness={0}
           />
         </RoundedBox>
       </mesh>
 
-      {/* Texto Flat e Moderno */}
       <Text
-        position={[0, 0, 0.22]} // Levemente à frente do botão
+        position={[0, 0, 0.22]}
         fontSize={0.35}
-        color="#222" // Cinza escuro, quase preto
-        font="https://fonts.gstatic.com/s/inter/v12/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfAZ9hjp-Ek-_EeA.woff"
+        color="#202020"
         anchorX="center"
         anchorY="middle"
+        font="https://fonts.gstatic.com/s/inter/v12/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfAZ9hjp-Ek-_EeA.woff"
       >
         Button
       </Text>
 
-      {/* Sombra suave no chão (Essential para realismo) */}
-      <ContactShadows 
-        position={[0, -0.8, 0]} 
-        opacity={0.4} 
-        scale={10} 
-        blur={2.5} 
-        far={4} 
-        color="#000000"
-      />
+      <ContactShadows position={[0, -0.8, 0]} opacity={0.5} scale={10} blur={2.5} far={4} />
     </group>
   );
 }
 
-// --- 3. A CENA PRINCIPAL ---
+// --- 3. APP PRINCIPAL ---
 export default function App() {
   const webcam = useWebcamTexture();
 
   return (
-    // Container CSS para centralizar e definir fundo branco
-    <div style={{ 
-      width: '100vw', 
-      height: '100vh', 
-      background: '#f5f5f7', // Branco "Apple" (levemente cinza)
-      display: 'flex', 
-      justifyContent: 'center', 
-      alignItems: 'center' 
-    }}>
-      
-      {/* O Canvas 3D */}
+    <div style={{ width: '100vw', height: '100vh', background: '#f0f0f0' }}>
       <Canvas dpr={[1, 2]} camera={{ position: [0, 0, 5], fov: 45 }}>
         
-        {/* Renderiza apenas se tivermos a câmera, senão o material fica preto */}
-        {webcam && <ChromePill envMap={webcam} />}
-        
-        {/* Luz ambiente suave para o botão não ficar preto nas bordas sem reflexo */}
+        {/* SOLUÇÃO DO QUADRADO PRETO: LUZES! */}
+        {/* Essas luzes garantem que o botão apareça mesmo sem câmera */}
         <ambientLight intensity={0.5} />
+        <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} intensity={1} />
+        <pointLight position={[-10, -10, -10]} intensity={0.5} />
+
+        {/* Se a câmera falhar, carrega um estúdio padrão (City) para dar reflexo */}
+        {!webcam && <Environment preset="city" />}
+
+        <ChromePill envMap={webcam} />
         
       </Canvas>
 
-      {/* Aviso caso o usuário negue a câmera */}
-      {!webcam && (
-        <div style={{ position: 'absolute', color: '#999', fontFamily: 'sans-serif' }}>
-          Permita a câmera para ativar o reflexo...
-        </div>
-      )}
+      <div style={{ 
+        position: 'absolute', bottom: 30, left: 0, width: '100%', 
+        textAlign: 'center', color: '#888', fontFamily: 'sans-serif', pointerEvents: 'none' 
+      }}>
+        {webcam ? "Modo Reflexo Ativo" : "Permita a câmera para ver o reflexo real"}
+      </div>
     </div>
   );
 }
